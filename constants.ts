@@ -110,7 +110,7 @@ export const DEFAULT_MACROS_SOURCE = `[
 	{ "trigger": "prod", "replacement": "\\\\prod", "options": "mA" },
 	{ "trigger": "\\\\sum", "replacement": "\\\\sum_{\${1:i}=\${2:1}}^{\${3:N}} $0", "options": "m" },
 	{ "trigger": "\\\\prod", "replacement": "\\\\prod_{\${1:i}=\${2:1}}^{\${3:N}} $0", "options": "m" },
-    { "trigger": "lim", "replacement": "\\\\lim_{ \${1:n} \\\\to \${2:\\\\infty} } $0", "options": "mA" },
+    { "trigger": "lim", "replacement": "\\\\lim_{ \${1:h} \\\\to \${2:0} } $0", "options": "mA" },
     { "trigger": "+-", "replacement": "\\\\pm", "options": "mA" },
 	{ "trigger": "-+", "replacement": "\\\\mp", "options": "mA" },
     { "trigger": "...", "replacement": "\\\\dots", "options": "mA" },

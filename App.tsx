@@ -413,22 +413,22 @@ export default function App() {
                             gameMode={gameMode}
                         />
 
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[500px]">
+                        <div className="flex flex-col gap-6">
                             {/* Problem Card */}
-                            <div className="flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-800 overflow-hidden relative h-full">
+                            <div className="flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-800 overflow-hidden relative min-h-[200px]">
                                 <div className="absolute top-0 left-0 w-full h-1 bg-slate-100 dark:bg-slate-800">
                                     <div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: `${(timeLeft / 60) * 100}%` }} />
                                 </div>
                                 <div className="p-2 flex items-center justify-center border-b border-slate-100 dark:border-slate-800">
                                     <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">{currentProblem.description || currentProblem.category}</span>
                                 </div>
-                                <div className="flex-1 flex items-center justify-center p-8 overflow-auto">
+                                <div className="flex-1 flex items-center justify-center p-8 overflow-x-auto">
                                     <LatexPreview latex={currentProblem.latex} className="text-3xl md:text-4xl text-slate-800 dark:text-slate-100 transition-all" />
                                 </div>
                             </div>
 
                             {/* Input Card */}
-                            <div className={`flex flex-col rounded-2xl transition-all duration-100 border-2 overflow-hidden shadow-lg h-full ${
+                            <div className={`flex flex-col rounded-2xl transition-all duration-100 border-2 overflow-hidden shadow-lg h-[450px] ${
                                 practiceInput && normalizeLatex(practiceInput) === normalizeLatex(currentProblem.latex) 
                                 ? 'border-green-500 ring-4 ring-green-500/20' 
                                 : 'border-slate-200 dark:border-slate-800 focus-within:border-indigo-500 focus-within:ring-4 focus-within:ring-indigo-500/20'
