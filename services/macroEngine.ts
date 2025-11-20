@@ -95,8 +95,8 @@ export const processReplacement = (
         if (char === '$') {
             const sub = raw.slice(i);
             
-            // Match ${1:default}
-            const complexMatch = sub.match(/^\$\{(\d+):([^}]+)\}/);
+            // Match ${1:default} - allow empty content with * instead of +
+            const complexMatch = sub.match(/^\$\{(\d+):([^}]*)\}/);
             if (complexMatch) {
                 const id = parseInt(complexMatch[1]);
                 const content = complexMatch[2];

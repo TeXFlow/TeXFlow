@@ -70,7 +70,7 @@ export const Editor: React.FC<EditorProps> = ({
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   
-  // Selection Persistence (Stores start and end to preserve highlights)
+  // Selection Persistence
   const pendingSelectionRef = useRef<{ start: number, end: number } | null>(null);
 
   // Snippet State
@@ -117,7 +117,6 @@ export const Editor: React.FC<EditorProps> = ({
       lastTypeTime.current = now;
   };
 
-  // Helper to shift tab stops when text is inserted/deleted programmatically
   const shiftTabStops = (diff: number, insertionPoint: number) => {
       if (snippetTabStops.current.length > 0) {
         const changeStart = insertionPoint;
@@ -127,13 +126,10 @@ export const Editor: React.FC<EditorProps> = ({
             }
             return stop;
         });
-        // Filter out stops that collapsed to negative/invalid or precede the edit weirdly?
-        // Actually we keep them if valid.
         snippetTabStops.current = snippetTabStops.current.filter(s => s.start >= 0);
       }
   };
 
-  // Unified Text Updater used by Hotkeys and Events
   const updateText = (newValue: string, newCursor: number, insertionPoint: number, diff: number, immediateHistory = true) => {
       shiftTabStops(diff, insertionPoint);
       saveHistory(newValue, newCursor, immediateHistory);
@@ -147,7 +143,7 @@ export const Editor: React.FC<EditorProps> = ({
         const newState = historyRef.current[historyPtrRef.current];
         onChange(newState.value);
         setPendingSelection(newState.cursor);
-        snippetTabStops.current = []; // Clear tabstops on undo
+        snippetTabStops.current = []; 
       }
   };
 
@@ -157,106 +153,124 @@ export const Editor: React.FC<EditorProps> = ({
         const newState = historyRef.current[historyPtrRef.current];
         onChange(newState.value);
         setPendingSelection(newState.cursor);
-        snippetTabStops.current = []; // Clear tabstops on undo
+        snippetTabStops.current = []; 
       }
   };
 
   const performSmartFraction = (start: number, end: number) => {
-      let targetStart = start;
-      let targetEnd = end;
-
-      if (start === end) {
-          // Aggressive Backward Scan
-          // Captures everything until a structural boundary, big operator, or relation.
-          let i = start - 1;
-          let balance = 0;
-          
-          while (i >= 0) {
-              const char = value[i];
-              
-              // 1. Handle Grouping Balance
-              if (['}', ')', ']'].includes(char)) {
-                  balance++;
-              } else if (['{', '(', '['].includes(char)) {
-                  if (balance > 0) {
-                      balance--;
-                  } else {
-                      // Unbalanced opening bracket -> Stop (Start of current block)
-                      targetStart = i + 1;
-                      break;
-                  }
-              }
-
-              // 2. Handle Stops (only if balanced)
-              if (balance === 0) {
-                  // Stop at newlines, tabs, or explicit relations (=, <, >)
-                  if (['\n', '&', '=', '<', '>'].includes(char)) {
-                      targetStart = i + 1;
-                      break;
-                  }
-
-                  // Stop at "Big Operators" or double backslash
-                  if (char === '\\') {
-                       // Check for double backslash (newline)
-                       if (value[i+1] === '\\') {
-                            targetStart = i + 2;
-                            break;
-                       }
-                       
-                       // Check for command operators
-                       const rest = value.substring(i, Math.min(i + 20, start));
-                       const match = rest.match(/^\\([a-zA-Z]+)/);
-                       
-                       if (match) {
-                           const cmd = match[1];
-                           // List of operators that act as hard stops for the fraction
-                           const STOP_OPS = [
-                               'int', 'sum', 'prod', 'lim', 'oint', 'bigcap', 'bigcup', 'bigvee', 'bigwedge',
-                               'approx', 'sim', 'equiv', 'neq', 'le', 'ge', 'leq', 'geq', 'to', 'implies', 'iff',
-                               'rightarrow', 'leftarrow'
-                           ]; 
-                           
-                           if (STOP_OPS.includes(cmd)) {
-                               // Stop immediately after the operator
-                               targetStart = i + match[0].length;
-                               break;
-                           }
-                       }
-                  }
-              }
-              
-              i--;
-          }
-          
-          // If loop completes (reached start of string), targetStart is 0
-          if (i < 0) targetStart = 0;
-
-          // Trim leading spaces from the captured range
-          while (targetStart < start && /\s/.test(value[targetStart])) {
-              targetStart++;
-          }
-      }
-
-      if (targetStart < targetEnd || (start === end && targetStart < start)) {
-           const selection = value.substring(targetStart, Math.max(targetEnd, start));
-           
+      // If selection exists, wrap selection.
+      if (start !== end) {
+           const selection = value.substring(start, end);
            const fractionMacro = { 
                trigger: "", 
                replacement: "\\frac{${VISUAL}}{${1:}}$0", 
                options: "mA" 
            };
-           
+           const { text: replaceText, selection: newSel, tabStops } = processReplacement(fractionMacro, [], selection);
+           const newValue = value.substring(0, start) + replaceText + value.substring(end);
+           updateText(newValue, start + newSel.end, start, newValue.length - value.length, true);
+           setPendingSelection(start + newSel.start, start + newSel.end);
+           snippetTabStops.current = tabStops.map(ts => ({ start: start + ts.start, end: start + ts.end }));
+           return;
+      }
+
+      // AGGRESSIVE FRACTION SCAN
+      const STOP_CMDS = ['sum', 'prod', 'int', 'oint', 'lim', 'max', 'min', 'sup', 'inf', 'bigcup', 'bigcap', 'iint', 'iiint'];
+      const RELATIONS_CMDS = ['approx', 'equiv', 'neq', 'geq', 'leq', 'to', 'rightarrow', 'leftarrow', 'implies', 'impliedby', 'iff', 'sim', 'ge', 'le', 'cong', 'simeq', 'propto'];
+      const STOP_SYMBOLS = ['=', '<', '>', '≤', '≥', '≈', '≡', '≠', '→', '←', '↔', '⇒', '⇐', '⇔', '↦'];
+
+      const getPreviousToken = (pos: number): { start: number, end: number, content: string, type: 'char' | 'cmd' | 'group' } | null => {
+          let p = pos;
+          while (p > 0 && /\s/.test(value[p - 1])) p--;
+          if (p === 0) return null;
+
+          const char = value[p - 1];
+          
+          // Group
+          if (['}', ')', ']'].includes(char)) {
+              const close = char;
+              const open = close === '}' ? '{' : close === ')' ? '(' : '[';
+              let nesting = 1;
+              let s = p - 1;
+              while (s > 0) {
+                  s--;
+                  if (value[s] === close) nesting++;
+                  if (value[s] === open) nesting--;
+                  if (nesting === 0) return { start: s, end: p, content: value.substring(s, p), type: 'group' };
+              }
+              return null; 
+          }
+
+          // Command
+          if (/[a-zA-Z]/.test(char)) {
+              let s = p - 1;
+              while (s > 0 && /[a-zA-Z]/.test(value[s - 1])) s--;
+              if (s > 0 && value[s - 1] === '\\') {
+                  return { start: s - 1, end: p, content: value.substring(s - 1, p), type: 'cmd' };
+              }
+              return { start: s, end: p, content: value.substring(s, p), type: 'char' };
+          }
+
+          // Single Char
+          return { start: p - 1, end: p, content: char, type: 'char' };
+      };
+
+      let scanPos = start;
+      let captureStart = start;
+      
+      while (scanPos > 0) {
+          const token = getPreviousToken(scanPos);
+          if (!token) break; 
+
+          // Check if this token is a bound argument (preceded by ^ or _)
+          let isBound = false;
+          let checkPos = token.start;
+          while (checkPos > 0 && /\s/.test(value[checkPos - 1])) checkPos--;
+          
+          if (checkPos > 0 && ['^', '_'].includes(value[checkPos - 1])) {
+              isBound = true;
+              scanPos = checkPos - 1; // Consume the operator
+          } else {
+              scanPos = token.start; // Just consume token
+          }
+
+          if (isBound) {
+              // It's a bound. We keep scanning left to find its base.
+              continue;
+          }
+
+          // It's a Base. Check for Stops.
+          if (token.type === 'cmd') {
+              const cmdName = token.content.slice(1);
+              if (STOP_CMDS.includes(cmdName) || RELATIONS_CMDS.includes(cmdName)) {
+                  break;
+              }
+          } else if (token.type === 'char') {
+               if (STOP_SYMBOLS.includes(token.content)) {
+                   break;
+               }
+          }
+
+          // Not a stop. Include it.
+          captureStart = token.start;
+      }
+      
+      if (captureStart < start) {
+           const selection = value.substring(captureStart, start);
+           const fractionMacro = { 
+               trigger: "", 
+               replacement: "\\frac{${VISUAL}}{${1:}}$0", 
+               options: "mA" 
+           };
            const { text: replaceText, selection: newSel, tabStops } = processReplacement(fractionMacro, [], selection);
            
-           const newValue = value.substring(0, targetStart) + replaceText + value.substring(Math.max(targetEnd, start));
-           const diff = newValue.length - value.length;
-           
-           updateText(newValue, targetStart + newSel.end, targetStart, diff, true);
-           setPendingSelection(targetStart + newSel.start, targetStart + newSel.end);
+           const newValue = value.substring(0, captureStart) + replaceText + value.substring(end);
+           updateText(newValue, captureStart + newSel.end, captureStart, newValue.length - value.length, true);
+           setPendingSelection(captureStart + newSel.start, captureStart + newSel.end);
            
            snippetTabStops.current = tabStops.map(ts => ({
-               start: targetStart + ts.start,
-               end: targetStart + ts.end
+               start: captureStart + ts.start,
+               end: captureStart + ts.end
            }));
       }
   };
@@ -279,7 +293,7 @@ export const Editor: React.FC<EditorProps> = ({
                 lines.splice(startLineIdx - 1, 0, ...movingLines);
                 
                 const newValue = lines.join('\n');
-                const shift = -(lineAbove.length + 1); // Shift by length of line swapped
+                const shift = -(lineAbove.length + 1); 
                 
                 snippetTabStops.current = [];
                 
@@ -320,7 +334,7 @@ export const Editor: React.FC<EditorProps> = ({
 
         // 2. Active Snippet Tabstops
         if (snippetTabStops.current.length > 0) {
-            e.preventDefault(); // Consume the key
+            e.preventDefault(); 
             let shouldJump = true;
             
             const matrixEnv = getEnclosingMatrixEnvironment(value, start);
@@ -333,7 +347,6 @@ export const Editor: React.FC<EditorProps> = ({
                     const matrixEnd = start + endTagIdx;
                     const nextStop = snippetTabStops.current[0];
                     
-                    // If next stop is outside matrix (physically after the end tag)
                     if (nextStop && nextStop.start >= matrixEnd) {
                         shouldJump = false;
                     }
@@ -346,19 +359,17 @@ export const Editor: React.FC<EditorProps> = ({
                     const safeStart = Math.max(0, Math.min(nextStop.start, value.length));
                     const safeEnd = Math.max(0, Math.min(nextStop.end, value.length));
                     
-                    // Manually set selection
                     if(textareaRef.current) {
                         textareaRef.current.setSelectionRange(safeStart, safeEnd);
-                        setPendingSelection(safeStart, safeEnd); // Just in case
+                        setPendingSelection(safeStart, safeEnd);
                     }
                     return;
                 }
             }
         }
 
-        // 3. Check for Manual Macro Trigger (Tab Expansion)
+        // 3. Check for Manual Macro Trigger
         if (start === end) {
-             // Passing checkAuto=false allows macros without 'A' (manual) to trigger here.
              const macroResult = checkMacroTrigger(value, start, macros, forceMath, false);
              if (macroResult) {
                  e.preventDefault();
@@ -370,7 +381,7 @@ export const Editor: React.FC<EditorProps> = ({
              }
         }
 
-        // 4. Matrix Environment Check - If not jumping, try to add '&'
+        // 4. Matrix Environment Check
         const matrixEnv = getEnclosingMatrixEnvironment(value, start);
         if (matrixEnv) {
              e.preventDefault();
@@ -381,7 +392,7 @@ export const Editor: React.FC<EditorProps> = ({
              return;
         }
 
-        // 5. "Tab Out" (Skip closing delimiters)
+        // 5. "Tab Out"
         if (start === end && start < value.length) {
             const nextChar = value[start];
             const closingDelimiters = ['}', ']', ')', '$', '>', '"', "'"];
@@ -395,7 +406,7 @@ export const Editor: React.FC<EditorProps> = ({
             }
         }
 
-        // 6. Indentation (Fallthrough default if it was Tab key)
+        // 6. Indentation
         if (e.key === 'Tab') {
             e.preventDefault();
             const indent = "  "; 
@@ -457,12 +468,11 @@ export const Editor: React.FC<EditorProps> = ({
 
   const performDeleteLine = (e: React.KeyboardEvent, start: number) => {
       e.preventDefault();
-      // Find start and end of line
       const lastNewLine = value.lastIndexOf('\n', start - 1);
       const nextNewLine = value.indexOf('\n', start);
       
       const delStart = lastNewLine === -1 ? 0 : lastNewLine + 1;
-      const delEnd = nextNewLine === -1 ? value.length : nextNewLine + 1; // +1 to eat the newline
+      const delEnd = nextNewLine === -1 ? value.length : nextNewLine + 1; 
       
       const newValue = value.substring(0, delStart) + value.substring(delEnd);
       const diff = -(delEnd - delStart);
@@ -477,9 +487,7 @@ export const Editor: React.FC<EditorProps> = ({
     const changeStart = diff > 0 ? newCursorPos - diff : newCursorPos;
     shiftTabStops(diff, changeStart);
 
-    // Trigger macros on input
     if (newValue.length > value.length) {
-       // Only trigger Auto macros (options='A') while typing
        const macroResult = checkMacroTrigger(newValue, newCursorPos, macros, forceMath, true);
        
        if (macroResult) {
@@ -501,7 +509,6 @@ export const Editor: React.FC<EditorProps> = ({
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     
-    // 1. CUSTOM KEYBINDINGS CHECK
     const combo = normalizeKeyCombo(e);
     const binding = keybindings.find(k => k.keys === combo);
 
@@ -512,19 +519,17 @@ export const Editor: React.FC<EditorProps> = ({
             case 'SMART_FRACTION': e.preventDefault(); performSmartFraction(start, end); return;
             case 'MOVE_LINE_UP': e.preventDefault(); performMoveLine('UP', start, end); return;
             case 'MOVE_LINE_DOWN': e.preventDefault(); performMoveLine('DOWN', start, end); return;
-            case 'NEXT_TABSTOP': performNextTabstop(e, start, end); return; // Handles preventDefault internally
-            case 'INDENT': performIndent(e, start, end); return; // Handles preventDefault internally
+            case 'NEXT_TABSTOP': performNextTabstop(e, start, end); return;
+            case 'INDENT': performIndent(e, start, end); return;
             case 'DELETE_WORD': performDeleteWord(e, start, end); return;
             case 'DELETE_LINE': performDeleteLine(e, start); return;
         }
     }
     
-    // --- ESCAPE ---
     if (e.key === 'Escape') {
         snippetTabStops.current = [];
     }
 
-    // --- AUTO-PAIRING ---
     const isModifier = e.ctrlKey || e.altKey || e.metaKey;
     const pairs: Record<string, string> = { '(': ')', '{': '}', '[': ']', '"': '"', "'": "'", '$': '$' };
     
@@ -537,7 +542,7 @@ export const Editor: React.FC<EditorProps> = ({
             const selection = value.substring(start, end);
             const newValue = value.substring(0, start) + open + selection + close + value.substring(end);
             const newCursor = start + 1 + selection.length;
-            const diff = 2; // Added 2 chars surrounding
+            const diff = 2; 
             
             updateText(newValue, newCursor, start, diff);
         } else {
@@ -550,7 +555,6 @@ export const Editor: React.FC<EditorProps> = ({
         return;
     }
     
-    // --- OVERTYPE ---
     if (start === end && !isModifier) {
         const char = e.key;
         const nextChar = value[start];
@@ -562,7 +566,6 @@ export const Editor: React.FC<EditorProps> = ({
         }
     }
     
-    // --- BACKSPACE PAIR ---
     if (e.key === 'Backspace' && start === end && start > 0 && !isModifier) {
         const prev = value[start - 1];
         const next = value[start];
@@ -578,7 +581,6 @@ export const Editor: React.FC<EditorProps> = ({
         }
     }
     
-    // --- VISUAL MACROS (Surround Selection) ---
     if (start !== end && !isModifier && e.key.length === 1) {
         const key = e.key;
         const visualMacro = macros.find(m => 
