@@ -1,0 +1,5 @@
+{
+  "name": "TeXFlow",
+  "description": "A high-performance LaTeX typing practice environment with customizable text-expansion macros, powered by Gemini for infinite practice content.",
+  "requestFramePermissions": []
+}
