@@ -1,5 +1,3 @@
-
-
 import { Macro } from '../types';
 
 /**
@@ -78,8 +76,20 @@ export const processReplacement = (
         
         if (char === '\\') {
             const next = raw[i+1] || "";
+
+            // Handle escaped newlines and tabs (\n, \t) which might come from string literals
+            if (next === 'n') {
+                clean += '\n';
+                i += 2;
+                continue;
+            }
+            if (next === 't') {
+                clean += '\t';
+                i += 2;
+                continue;
+            }
             
-            // Only consume the backslash if it is escaping a special snippet character
+            // Only consume the backslash if it is escaping a special snippet character or another backslash
             if (['$', '}', '\\'].includes(next)) {
                 clean += next;
                 i += 2;
@@ -289,11 +299,11 @@ export const checkMacroTrigger = (
                           selection: {
                               start: insertionStart + selection.start,
                               end: insertionStart + selection.end
-                      },
+                          },
                           tabStops: tabStops.map(ts => ({
                               start: insertionStart + ts.start,
                               end: insertionStart + ts.end
-                      }))
+                          }))
                       };
                  }
              } catch (e) {}
@@ -315,7 +325,7 @@ export const checkMacroTrigger = (
                       tabStops: tabStops.map(ts => ({
                           start: insertionStart + ts.start,
                           end: insertionStart + ts.end
-                      }))
+                          }))
                  };
              }
          }
